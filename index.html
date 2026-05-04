@@ -361,7 +361,8 @@ let appState = {
   imageFront: null,   // { base64, mimeType, fileName }
   imageBack:  null,   // { base64, mimeType, fileName } | null
   gpsLocation: null,
-  cardData: null
+  cardData: null,
+  saved: false
 };
 
 // ============================================================
@@ -596,6 +597,7 @@ function fillResultForm(d) {
 }
 
 function showResultSection(source) {
+  appState.saved = false;
   document.getElementById('section-result').classList.remove('hidden');
   document.getElementById('sourceTag').textContent = source;
   document.getElementById('processingCard').classList.add('hidden');
@@ -614,6 +616,7 @@ async function saveRecord() {
   try {
     const res = await callGAS('saveToSheet', { clientData: data });
     if (!res.success) throw new Error(res.error);
+    appState.saved = true;
     showToast('已儲存至 Google Sheet ✓', 'success');
     saveBtn.innerHTML = '<i class="fa-solid fa-check mr-2"></i>已儲存';
     saveBtn.classList.add('opacity-60');
@@ -668,6 +671,12 @@ function collectResultForm() {
 // 重置
 // ============================================================
 function resetApp() {
+  const hasUnsaved = appState.cardData && !appState.saved;
+  if (hasUnsaved) {
+    const confirmed = confirm('⚠️ 尚未儲存至 Google Sheet，確定要離開這筆資料嗎？');
+    if (!confirmed) return;
+  }
+  appState.saved = false;
   appState.imageFront = null;
   appState.imageBack  = null;
   appState.cardData   = null;
