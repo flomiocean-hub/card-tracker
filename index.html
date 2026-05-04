@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>BCard 名片追蹤</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="BCard">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" id="appleIcon" href="">
+  <link rel="manifest" id="pwaManifest" href="">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body { background: #f0f4f8; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .tab-active { border-bottom: 3px solid #1e40af; color: #1e40af; font-weight: 600; }
+    .tab-inactive { border-bottom: 3px solid transparent; color: #6b7280; }
+    .upload-zone { border: 2px dashed #93c5fd; background: #eff6ff; transition: all 0.2s; }
+    .upload-zone.dragover { border-color: #1e40af; background: #dbeafe; }
+    .step-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .step-done { background: #10b981; }
+    .step-active { background: #1e40af; animation: pulse 1s infinite; }
+    .step-pending { background: #d1d5db; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .card { background: white; border-radius: 16px; box-shadow: 0 1px 12px rgba(0,0,0,0.08); }
+    .btn-primary { background: #1e40af; color: white; border-radius: 12px; padding: 14px 24px; font-weight: 600; font-size: 16px; transition: all 0.2s; }
+    .btn-primary:active { background: #1e3a8a; transform: scale(0.98); }
+    .btn-secondary { background: #f3f4f6; color: #374151; border-radius: 12px; padding: 14px 24px; font-weight: 600; font-size: 16px; }
+    .btn-green { background: #059669; color: white; border-radius: 12px; padding: 14px 24px; font-weight: 600; font-size: 16px; }
+    .field-label { font-size: 12px; color: #6b7280; font-weight: 500; margin-bottom: 4px; }
+    .field-input { width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; font-size: 15px; background: #fafafa; }
+    .field-input:focus { outline: none; border-color: #1e40af; background: white; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .spinner { width: 24px; height: 24px; border: 3px solid #dbeafe; border-top: 3px solid #1e40af; border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #previewImg { max-height: 200px; object-fit: contain; border-radius: 12px; }
+    textarea.field-input { resize: vertical; min-height: 120px; }
+  </style>
+</head>
+<body class="min-h-screen pb-10">
+
+<!-- ============================================================
+  設定 — 部署後修改這裡
+  ============================================================ -->
+<script>
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzNr3xHZ-SopUnVdKyboVmiLBZPw6nVxNGnDLhQlgNqedaCJrtTkk8dywfzRkPntXElDg/exec';
+  const SECRET_TOKEN = 'marco_card_2026_secure';
+
+  // 業務識別：從 URL 參數 ?user=xxx 取得
+  const SALES_USERS = {
+    'marco': { name: 'Marco Liu',  email: 'flomiocean@gmail.com' },
+    'penny': { name: 'Penny Wang', email: 'penny840326@gmail.com' },
+  };
+  const _userKey = new URLSearchParams(window.location.search).get('user') || '';
+  const currentUser = SALES_USERS[_userKey] || null;
+</script>
+
+<!-- 未登入提示（無 user 參數時顯示） -->
+<div id="noUserBanner" class="hidden bg-yellow-50 border-b border-yellow-200 px-5 py-3 text-sm text-yellow-800 text-center">
+  ⚠️ 未指定業務帳號，上傳資料將不記錄業務姓名。
+  請使用個人專屬連結，或聯絡管理員。
+</div>
+
+<!-- Header -->
+<div style="background: linear-gradient(135deg, #1e40af, #1d4ed8);" class="text-white px-5 pt-12 pb-6">
+  <div class="flex items-center justify-between mb-1">
+    <div class="flex items-center gap-3">
+      <i class="fa-solid fa-id-card text-2xl"></i>
+      <h1 class="text-xl font-bold">名片追蹤系統</h1>
+    </div>
+    <a href="admin.html" class="bg-white/20 hover:bg-white/30 text-white text-sm px-4 py-2 rounded-xl flex items-center gap-2 transition">
+      <i class="fa-solid fa-chart-line"></i> 管理後台
+    </a>
+  </div>
+  <div class="flex items-center gap-2 ml-9">
+    <p id="userLabel" class="text-blue-200 text-sm">拍照建檔 · AI 分析 · 自動開發信</p>
+  </div>
+</div>
+
+<!-- Tab Bar -->
+<div class="bg-white border-b border-gray-100 flex sticky top-0 z-10 shadow-sm">
+  <button onclick="switchTab('upload')" id="tab-upload" class="flex-1 py-4 text-sm tab-active transition-all">
+    <i class="fa-solid fa-camera mr-1"></i> 名片上傳
+  </button>
+  <button onclick="switchTab('manual')" id="tab-manual" class="flex-1 py-4 text-sm tab-inactive transition-all">
+    <i class="fa-solid fa-pen mr-1"></i> 手動登記
+  </button>
+  <button onclick="switchTab('batch')" id="tab-batch" class="flex-1 py-4 text-sm tab-inactive transition-all">
+    <i class="fa-solid fa-layer-group mr-1"></i> 批次匯入
+  </button>
+</div>
+
+<div class="max-w-lg mx-auto px-4 mt-5">
+
+  <!-- ========== TAB: 名片上傳 ========== -->
+  <div id="section-upload">
+
+    <!-- Upload Zone：正面 + 背面 -->
+    <div id="uploadCard" class="card p-5 mb-4">
+      <div class="grid grid-cols-2 gap-3">
+
+        <!-- 正面 -->
+        <div>
+          <p class="field-label mb-2">名片正面 <span class="text-red-400">*</span></p>
+          <div id="uploadZoneFront"
+               class="upload-zone rounded-2xl flex flex-col items-center justify-center p-4 cursor-pointer"
+               style="min-height:110px"
+               onclick="document.getElementById('fileInputFront').click()">
+            <i class="fa-solid fa-camera text-3xl text-blue-400 mb-2"></i>
+            <p class="text-xs text-gray-500 text-center">點擊拍照</p>
+          </div>
+          <img id="previewFront" class="hidden w-full mt-2 rounded-xl cursor-pointer"
+               style="max-height:110px;object-fit:contain"
+               onclick="document.getElementById('fileInputFront').click()" alt="正面預覽">
+          <input type="file" id="fileInputFront" accept="image/*" capture="environment"
+                 class="hidden" onchange="handleFileSelect(event,'front')">
+        </div>
+
+        <!-- 背面 -->
+        <div>
+          <p class="field-label mb-2">名片背面 <span class="text-gray-400">選填</span></p>
+          <div id="uploadZoneBack"
+               class="upload-zone rounded-2xl flex flex-col items-center justify-center p-4 cursor-pointer"
+               style="min-height:110px"
+               onclick="document.getElementById('fileInputBack').click()">
+            <i class="fa-solid fa-rotate text-3xl text-gray-300 mb-2"></i>
+            <p class="text-xs text-gray-400 text-center">點擊拍照</p>
+          </div>
+          <img id="previewBack" class="hidden w-full mt-2 rounded-xl cursor-pointer"
+               style="max-height:110px;object-fit:contain"
+               onclick="document.getElementById('fileInputBack').click()" alt="背面預覽">
+          <input type="file" id="fileInputBack" accept="image/*" capture="environment"
+                 class="hidden" onchange="handleFileSelect(event,'back')">
+        </div>
+
+      </div>
+      <p class="text-xs text-gray-400 text-center mt-2">點擊圖片可重新拍攝</p>
+    </div>
+
+    <!-- GPS Status -->
+    <div class="card px-5 py-4 mb-4 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <i class="fa-solid fa-location-dot text-blue-600"></i>
+        <span class="text-sm font-medium text-gray-700">GPS 位置</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="gpsStatus" class="text-sm text-gray-400">未取得</span>
+        <button onclick="requestGPS()" class="text-xs bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg font-medium">取得位置</button>
+      </div>
+    </div>
+
+    <!-- Process Button -->
+    <button id="processBtn" onclick="processCard()" class="btn-primary w-full text-center mb-4 opacity-50 cursor-not-allowed" disabled>
+      <i class="fa-solid fa-wand-magic-sparkles mr-2"></i>OCR 解析 + AI 分析
+    </button>
+
+    <!-- Processing Steps -->
+    <div id="processingCard" class="card p-5 mb-4 hidden">
+      <p class="font-semibold text-gray-700 mb-4">處理中...</p>
+      <div class="space-y-3">
+        <div class="flex items-center gap-3">
+          <span id="step1dot" class="step-dot step-pending"></span>
+          <span id="step1text" class="text-sm text-gray-500">OCR 辨識名片內容</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span id="step2dot" class="step-dot step-pending"></span>
+          <span id="step2text" class="text-sm text-gray-500">公司背景 AI 分析</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span id="step3dot" class="step-dot step-pending"></span>
+          <span id="step3text" class="text-sm text-gray-500">產生開發 Email 草稿</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== TAB: 手動登記 ========== -->
+  <div id="section-manual" class="hidden">
+    <div class="card p-5 mb-4">
+      <p class="text-sm text-gray-500 mb-4">手動填寫客戶資料，AI 將自動分析公司背景並產生 Email 草稿。</p>
+      <div id="manualForm" class="space-y-3">
+        <!-- 手動表單欄位將由 JS 動態生成 -->
+      </div>
+      <button onclick="analyzeManual()" class="btn-primary w-full text-center mt-5">
+        <i class="fa-solid fa-wand-magic-sparkles mr-2"></i>AI 分析 + 產生 Email
+      </button>
+    </div>
+  </div>
+
+  <!-- ========== TAB: 批次匯入 ========== -->
+  <div id="section-batch" class="hidden">
+
+    <!-- 說明 -->
+    <div class="card p-5 mb-4">
+      <div class="flex items-center gap-2 mb-3">
+        <i class="fa-solid fa-layer-group text-blue-600 text-lg"></i>
+        <h2 class="font-bold text-gray-800">批次名片匯入</h2>
+      </div>
+      <p class="text-sm text-gray-500 mb-1">將多張名片圖片放入 Google Drive 資料夾並開啟共享，貼入連結後系統將在背景自動處理所有圖片，完成後以 Email 通知。</p>
+    </div>
+
+    <!-- 輸入表單 -->
+    <div class="card p-5 mb-4">
+      <div class="space-y-4">
+
+        <!-- Drive 資料夾連結 -->
+        <div>
+          <p class="field-label">Google Drive 資料夾連結 <span class="text-red-500">*</span></p>
+          <input id="batchFolderUrl" type="url" class="field-input"
+            placeholder="https://drive.google.com/drive/folders/..." />
+          <p class="text-xs text-gray-400 mt-1">請確認資料夾已設定「知道連結的人可以檢視/編輯」</p>
+        </div>
+
+        <!-- 通知 Email -->
+        <div>
+          <p class="field-label">處理完成通知 Email <span class="text-red-500">*</span></p>
+          <input id="batchEmail" type="email" class="field-input"
+            placeholder="your@email.com" />
+        </div>
+
+        <!-- 業務備註（選填） -->
+        <div>
+          <p class="field-label">備註說明（選填）</p>
+          <input id="batchNote" type="text" class="field-input"
+            placeholder="例如：2026台北醫展收到的名片" />
+        </div>
+
+      </div>
+
+      <!-- 確認按鈕 -->
+      <button id="batchSubmitBtn" onclick="startBatchImport()" class="btn-primary w-full text-center mt-5">
+        <i class="fa-solid fa-rocket mr-2"></i>驗證並開始批次處理
+      </button>
+    </div>
+
+    <!-- 處理狀態 -->
+    <div id="batchStatusCard" class="card p-5 mb-4 hidden">
+      <div class="flex items-center gap-3 mb-3">
+        <span id="batchStatusIcon" class="text-2xl">⏳</span>
+        <div>
+          <p id="batchStatusTitle" class="font-semibold text-gray-800">驗證資料夾中...</p>
+          <p id="batchStatusSub" class="text-sm text-gray-500"></p>
+        </div>
+      </div>
+      <div id="batchProgressBar" class="hidden">
+        <div class="w-full bg-gray-100 rounded-full h-2 mt-2">
+          <div id="batchProgressFill" class="bg-blue-600 h-2 rounded-full transition-all" style="width:0%"></div>
+        </div>
+        <p id="batchProgressText" class="text-xs text-gray-400 mt-1 text-right"></p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ========== 結果區域 (OCR/手動共用) ========== -->
+  <div id="section-result" class="hidden">
+
+    <!-- 客戶資料預覽 -->
+    <div class="card p-5 mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-bold text-gray-800 flex items-center gap-2">
+          <i class="fa-solid fa-user text-blue-600"></i> 客戶資料
+        </h2>
+        <span id="sourceTag" class="badge bg-blue-100 text-blue-700">OCR</span>
+      </div>
+
+      <!-- 預覽圖片 -->
+      <img id="resultPreviewImg" class="hidden w-full mb-4 rounded-xl" alt="">
+
+      <div class="grid grid-cols-2 gap-3">
+        <div><p class="field-label">中文姓名</p><input class="field-input" id="r_nameChinese" placeholder="中文姓名"></div>
+        <div><p class="field-label">英文姓名</p><input class="field-input" id="r_nameEnglish" placeholder="English Name"></div>
+        <div class="col-span-2"><p class="field-label">公司名稱</p><input class="field-input" id="r_companyName" placeholder="公司名稱"></div>
+        <div><p class="field-label">品牌名稱</p><input class="field-input" id="r_brandName" placeholder="選填"></div>
+        <div><p class="field-label">職稱</p><input class="field-input" id="r_title" placeholder="職稱 / Title"></div>
+        <div><p class="field-label">電話 1</p><input class="field-input" id="r_phone1" placeholder="電話1" type="tel"></div>
+        <div><p class="field-label">電話 2</p><input class="field-input" id="r_phone2" placeholder="電話2" type="tel"></div>
+        <div><p class="field-label">Email 1</p><input class="field-input" id="r_email1" placeholder="email1@example.com" type="email"></div>
+        <div><p class="field-label">Email 2</p><input class="field-input" id="r_email2" placeholder="email2@example.com" type="email"></div>
+        <div class="col-span-2"><p class="field-label">公司地址</p><input class="field-input" id="r_address" placeholder="公司地址"></div>
+        <div><p class="field-label">LINE ID</p><input class="field-input" id="r_lineId" placeholder="LINE ID"></div>
+        <div><p class="field-label">其他通訊軟體</p><input class="field-input" id="r_otherMessenger" placeholder="平台:ID"></div>
+        <div><p class="field-label">官方網站</p><input class="field-input" id="r_website" placeholder="https://"></div>
+        <div><p class="field-label">作品集網址</p><input class="field-input" id="r_portfolio" placeholder="選填"></div>
+        <div class="col-span-2"><p class="field-label">GPS 位置</p><input class="field-input" id="r_gpsLocation" placeholder="緯度,經度" readonly></div>
+        <div class="col-span-2"><p class="field-label">備註</p><textarea class="field-input" id="r_notes" placeholder="補充備註..." rows="2"></textarea></div>
+      </div>
+    </div>
+
+    <!-- 公司分析 -->
+    <div class="card p-5 mb-4">
+      <h2 class="font-bold text-gray-800 flex items-center gap-2 mb-3">
+        <i class="fa-solid fa-magnifying-glass-chart text-purple-600"></i> 公司背景分析
+      </h2>
+      <div id="analysisContent" class="text-sm text-gray-700 leading-relaxed bg-purple-50 rounded-xl p-4">
+        等待分析...
+      </div>
+    </div>
+
+    <!-- Email 草稿 -->
+    <div class="card p-5 mb-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-bold text-gray-800 flex items-center gap-2">
+          <i class="fa-solid fa-envelope text-green-600"></i> Email 草稿
+        </h2>
+        <span class="badge bg-yellow-100 text-yellow-700">草稿</span>
+      </div>
+      <div class="mb-3">
+        <p class="field-label">收件人 Email</p>
+        <input class="field-input" id="r_toEmail" placeholder="client@example.com" type="email">
+      </div>
+      <div class="mb-3">
+        <p class="field-label">郵件主旨</p>
+        <input class="field-input" id="emailSubject" placeholder="Subject">
+      </div>
+      <div>
+        <p class="field-label">郵件內文（可編輯）</p>
+        <textarea class="field-input" id="emailBody" rows="10" placeholder="Email 草稿..."></textarea>
+      </div>
+    </div>
+
+    <!-- 操作按鈕 -->
+    <div class="space-y-3 mb-6">
+      <button onclick="saveRecord()" class="btn-primary w-full text-center" id="saveBtn">
+        <i class="fa-solid fa-floppy-disk mr-2"></i>儲存至 Google Sheet
+      </button>
+      <button onclick="createDraft()" class="btn-green w-full text-center" id="draftBtn">
+        <i class="fa-brands fa-google mr-2"></i>建立 Gmail 草稿
+      </button>
+      <button onclick="resetApp()" class="btn-secondary w-full text-center">
+        <i class="fa-solid fa-plus mr-2"></i>新增下一筆
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="fixed bottom-8 left-1/2 transform -translate-x-1/2 hidden z-50">
+  <div class="bg-gray-800 text-white px-5 py-3 rounded-2xl text-sm font-medium shadow-xl flex items-center gap-2">
+    <span id="toastIcon"></span>
+    <span id="toastMsg"></span>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 全域狀態
+// ============================================================
+// 顯示業務資訊
+if (currentUser) {
+  document.getElementById('userLabel').innerHTML =
+    `👤 <strong>${currentUser.name}</strong> &nbsp;·&nbsp; 拍照建檔 · AI 分析 · 自動開發信`;
+} else {
+  document.getElementById('noUserBanner').classList.remove('hidden');
+}
+
+let appState = {
+  tab: 'upload',
+  imageFront: null,   // { base64, mimeType, fileName }
+  imageBack:  null,   // { base64, mimeType, fileName } | null
+  gpsLocation: null,
+  cardData: null
+};
+
+// ============================================================
+// Tab 切換
+// ============================================================
+function switchTab(tab) {
+  appState.tab = tab;
+  document.getElementById('section-upload').classList.toggle('hidden', tab !== 'upload');
+  document.getElementById('section-manual').classList.toggle('hidden', tab !== 'manual');
+  document.getElementById('section-batch').classList.toggle('hidden', tab !== 'batch');
+  document.getElementById('section-result').classList.add('hidden');
+  document.getElementById('tab-upload').className = `flex-1 py-4 text-sm transition-all ${tab==='upload'?'tab-active':'tab-inactive'}`;
+  document.getElementById('tab-manual').className = `flex-1 py-4 text-sm transition-all ${tab==='manual'?'tab-active':'tab-inactive'}`;
+  document.getElementById('tab-batch').className = `flex-1 py-4 text-sm transition-all ${tab==='batch'?'tab-active':'tab-inactive'}`;
+  if (tab === 'manual' && !document.getElementById('manualForm').children.length) {
+    buildManualForm();
+  }
+  if (tab === 'batch') {
+    // Pre-fill email from current user if available
+    const emailInput = document.getElementById('batchEmail');
+    if (currentUser && !emailInput.value) emailInput.value = currentUser.email;
+  }
+}
+
+// ============================================================
+// 手動表單生成
+// ============================================================
+function buildManualForm() {
+  const fields = [
+    { id: 'm_nameChinese', label: '中文姓名', placeholder: '中文姓名', col: 1 },
+    { id: 'm_nameEnglish', label: '英文姓名', placeholder: 'English Name', col: 1 },
+    { id: 'm_companyName', label: '公司名稱', placeholder: '公司名稱', col: 2 },
+    { id: 'm_brandName',   label: '品牌名稱', placeholder: '選填', col: 1 },
+    { id: 'm_title',       label: '職稱',     placeholder: '職稱 / Title', col: 1 },
+    { id: 'm_phone1',      label: '電話 1',   placeholder: '電話', col: 1 },
+    { id: 'm_phone2',      label: '電話 2',   placeholder: '選填', col: 1 },
+    { id: 'm_email1',      label: 'Email 1',  placeholder: 'email@example.com', col: 1 },
+    { id: 'm_email2',      label: 'Email 2',  placeholder: '選填', col: 1 },
+    { id: 'm_address',     label: '公司地址', placeholder: '公司地址', col: 2 },
+    { id: 'm_lineId',      label: 'LINE ID',  placeholder: 'LINE ID', col: 1 },
+    { id: 'm_otherMessenger', label: '其他通訊軟體', placeholder: '平台:ID', col: 1 },
+    { id: 'm_website',     label: '官方網站', placeholder: 'https://', col: 1 },
+    { id: 'm_portfolio',   label: '作品集網址', placeholder: '選填', col: 1 },
+    { id: 'm_notes',       label: '備註',     placeholder: '補充備註...', col: 2, type: 'textarea' },
+  ];
+
+  const form = document.getElementById('manualForm');
+  form.innerHTML = '<div class="grid grid-cols-2 gap-3">' + fields.map(f => `
+    <div class="${f.col===2?'col-span-2':''}">
+      <p class="field-label">${f.label}</p>
+      ${f.type==='textarea'
+        ? `<textarea class="field-input" id="${f.id}" placeholder="${f.placeholder}" rows="2"></textarea>`
+        : `<input class="field-input" id="${f.id}" placeholder="${f.placeholder}">`
+      }
+    </div>
+  `).join('') + '</div>';
+}
+
+// ============================================================
+// 圖片選擇與壓縮（正面 / 背面）
+// ============================================================
+function handleFileSelect(event, side) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const img = new Image();
+    img.onload = function() {
+      const canvas = document.createElement('canvas');
+      const maxSize = 1200;
+      let { width, height } = img;
+      if (width > maxSize || height > maxSize) {
+        if (width > height) { height = height * maxSize / width; width = maxSize; }
+        else { width = width * maxSize / height; height = maxSize; }
+      }
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      const compressed = canvas.toDataURL('image/jpeg', 0.82);
+      const base64 = compressed.split(',')[1];
+      const fileName = `card_${side}_${Date.now()}.jpg`;
+
+      if (side === 'front') {
+        appState.imageFront = { base64, mimeType: 'image/jpeg', fileName };
+        document.getElementById('previewFront').src = compressed;
+        document.getElementById('previewFront').classList.remove('hidden');
+        document.getElementById('uploadZoneFront').classList.add('hidden');
+      } else {
+        appState.imageBack = { base64, mimeType: 'image/jpeg', fileName };
+        document.getElementById('previewBack').src = compressed;
+        document.getElementById('previewBack').classList.remove('hidden');
+        document.getElementById('uploadZoneBack').classList.add('hidden');
+      }
+
+      // 只要正面有圖即可啟用按鈕
+      if (appState.imageFront) {
+        const btn = document.getElementById('processBtn');
+        btn.disabled = false;
+        btn.classList.remove('opacity-50', 'cursor-not-allowed');
+      }
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// ============================================================
+// GPS
+// ============================================================
+function requestGPS() {
+  const statusEl = document.getElementById('gpsStatus');
+  statusEl.innerHTML = '<span class="spinner"></span>';
+  if (!navigator.geolocation) {
+    statusEl.textContent = '不支援 GPS'; return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const loc = `${pos.coords.latitude.toFixed(6)},${pos.coords.longitude.toFixed(6)}`;
+      appState.gpsLocation = loc;
+      statusEl.innerHTML = `<span class="text-green-600 font-medium"><i class="fa-solid fa-check mr-1"></i>${loc}</span>`;
+    },
+    err => { statusEl.textContent = '取得失敗'; }
+  );
+}
+
+// ============================================================
+// OCR 處理流程
+// ============================================================
+async function processCard() {
+  if (!appState.imageFront) { showToast('請先上傳名片正面', 'error'); return; }
+
+  document.getElementById('processingCard').classList.remove('hidden');
+  document.getElementById('processBtn').disabled = true;
+  document.getElementById('processBtn').innerHTML = '<span class="spinner mr-2"></span>處理中...';
+
+  setStep(1, 'active', 'OCR 辨識名片內容');
+
+  try {
+    const res = await callGAS('processCard', {
+      imageBase64:     appState.imageFront.base64,
+      mimeType:        appState.imageFront.mimeType,
+      fileName:        appState.imageFront.fileName,
+      imageBase64Back: appState.imageBack?.base64  || null,
+      mimeTypeBack:    appState.imageBack?.mimeType || null,
+      gpsLocation:     appState.gpsLocation || '',
+      userKey:         _userKey
+    });
+
+    if (!res.success) throw new Error(res.error);
+
+    setStep(1, 'done'); setStep(2, 'done'); setStep(3, 'done');
+
+    appState.cardData = res.data;
+    fillResultForm(res.data);
+    showResultSection('OCR');
+
+  } catch (e) {
+    showToast('處理失敗：' + e.message, 'error');
+    document.getElementById('processBtn').disabled = false;
+    document.getElementById('processBtn').innerHTML = '<i class="fa-solid fa-wand-magic-sparkles mr-2"></i>OCR 解析 + AI 分析';
+  }
+}
+
+function setStep(n, status, text) {
+  const dot = document.getElementById(`step${n}dot`);
+  const txt = document.getElementById(`step${n}text`);
+  dot.className = `step-dot step-${status}`;
+  if (text) txt.textContent = text;
+  if (status === 'done') txt.className = 'text-sm text-green-600 font-medium';
+  if (status === 'active') txt.className = 'text-sm text-blue-600 font-medium';
+}
+
+// ============================================================
+// 手動登記 AI 分析
+// ============================================================
+async function analyzeManual() {
+  const data = collectManualForm();
+  if (!data.companyName && !data.nameChinese && !data.nameEnglish) {
+    showToast('請至少填寫姓名或公司名稱', 'error'); return;
+  }
+
+  data.gpsLocation = appState.gpsLocation || '';
+  data.uploadTime = new Date().toISOString();
+  data.source = '手動';
+
+  showToast('AI 分析中...', 'loading');
+
+  try {
+    const res = await callGAS('analyzeManual', { clientData: data, userKey: _userKey });
+    if (!res.success) throw new Error(res.error);
+    appState.cardData = res.data;
+    fillResultForm(res.data);
+    showResultSection('手動');
+    showToast('分析完成！', 'success');
+  } catch(e) {
+    showToast('分析失敗：' + e.message, 'error');
+  }
+}
+
+function collectManualForm() {
+  const ids = ['nameChinese','nameEnglish','companyName','brandName','title','phone1','phone2','email1','email2','address','lineId','otherMessenger','website','portfolio','notes'];
+  const data = {};
+  ids.forEach(id => { const el = document.getElementById('m_'+id); if(el) data[id] = el.value.trim(); });
+  return data;
+}
+
+// ============================================================
+// 填入結果表單
+// ============================================================
+function fillResultForm(d) {
+  const fields = ['nameChinese','nameEnglish','companyName','brandName','title','phone1','phone2','email1','email2','address','lineId','otherMessenger','website','portfolio','gpsLocation','notes'];
+  fields.forEach(f => { const el = document.getElementById('r_'+f); if(el) el.value = d[f] || ''; });
+
+  // 分析
+  document.getElementById('analysisContent').textContent = d.companyAnalysis || '（無分析結果）';
+
+  // Email
+  const emailText = d.emailDraft || '';
+  const subjectMatch = emailText.match(/Subject:\s*(.+)/i);
+  const subject = subjectMatch ? subjectMatch[1].trim() : '';
+  const body = emailText.replace(/^Subject:.+\n?/im, '').trim();
+  document.getElementById('emailSubject').value = subject;
+  document.getElementById('emailBody').value = body;
+  document.getElementById('r_toEmail').value = d.email1 || '';
+
+  // 圖片預覽（顯示正面）
+  if (appState.imageFront && appState.tab === 'upload') {
+    const img = document.getElementById('resultPreviewImg');
+    img.src = 'data:image/jpeg;base64,' + appState.imageFront.base64;
+    img.classList.remove('hidden');
+  }
+}
+
+function showResultSection(source) {
+  document.getElementById('section-result').classList.remove('hidden');
+  document.getElementById('sourceTag').textContent = source;
+  document.getElementById('processingCard').classList.add('hidden');
+  document.getElementById('section-result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ============================================================
+// 儲存至 Google Sheet
+// ============================================================
+async function saveRecord() {
+  const data = collectResultForm();
+  showToast('儲存中...', 'loading');
+  const saveBtn = document.getElementById('saveBtn');
+  saveBtn.disabled = true;
+
+  try {
+    const res = await callGAS('saveToSheet', { clientData: data });
+    if (!res.success) throw new Error(res.error);
+    showToast('已儲存至 Google Sheet ✓', 'success');
+    saveBtn.innerHTML = '<i class="fa-solid fa-check mr-2"></i>已儲存';
+    saveBtn.classList.add('opacity-60');
+  } catch(e) {
+    showToast('儲存失敗：' + e.message, 'error');
+    saveBtn.disabled = false;
+  }
+}
+
+// ============================================================
+// 建立 Gmail 草稿
+// ============================================================
+async function createDraft() {
+  const to = document.getElementById('r_toEmail').value.trim();
+  const subject = document.getElementById('emailSubject').value.trim();
+  const body = document.getElementById('emailBody').value.trim();
+
+  if (!to) { showToast('請填寫收件人 Email', 'error'); return; }
+  if (!subject || !body) { showToast('主旨或內文不能為空', 'error'); return; }
+
+  const draftBtn = document.getElementById('draftBtn');
+  draftBtn.disabled = true;
+  showToast('建立 Gmail 草稿中...', 'loading');
+
+  try {
+    const res = await callGAS('createDraft', { emailData: { to, subject, body } });
+    if (!res.success) throw new Error(res.error);
+    showToast('Gmail 草稿已建立，請至 Gmail 查看 ✓', 'success');
+    draftBtn.innerHTML = '<i class="fa-solid fa-check mr-2"></i>草稿已建立';
+    draftBtn.classList.add('opacity-60');
+  } catch(e) {
+    showToast('建立失敗：' + e.message, 'error');
+    draftBtn.disabled = false;
+  }
+}
+
+function collectResultForm() {
+  const fields = ['nameChinese','nameEnglish','companyName','brandName','title','phone1','phone2','email1','email2','address','lineId','otherMessenger','website','portfolio','gpsLocation','notes'];
+  const data = {};
+  fields.forEach(f => { const el = document.getElementById('r_'+f); if(el) data[f] = el.value.trim(); });
+  data.companyAnalysis = document.getElementById('analysisContent').textContent;
+  data.emailDraft = `Subject: ${document.getElementById('emailSubject').value}\n\n${document.getElementById('emailBody').value}`;
+  data.imageUrl     = appState.cardData?.imageUrl     || '';
+  data.uploadTime   = appState.cardData?.uploadTime   || new Date().toISOString();
+  data.source       = appState.cardData?.source       || (appState.tab === 'upload' ? 'OCR' : '手動');
+  data.salesRep     = currentUser ? currentUser.name  : '';
+  data.companyCoord = appState.cardData?.companyCoord || '';  // OCR 地理編碼結果 → Y 欄
+  return data;
+}
+
+// ============================================================
+// 重置
+// ============================================================
+function resetApp() {
+  appState.imageFront = null;
+  appState.imageBack  = null;
+  appState.cardData   = null;
+
+  // 正面
+  document.getElementById('previewFront').classList.add('hidden');
+  document.getElementById('previewFront').src = '';
+  document.getElementById('uploadZoneFront').classList.remove('hidden');
+  document.getElementById('fileInputFront').value = '';
+  // 背面
+  document.getElementById('previewBack').classList.add('hidden');
+  document.getElementById('previewBack').src = '';
+  document.getElementById('uploadZoneBack').classList.remove('hidden');
+  document.getElementById('fileInputBack').value = '';
+
+  document.getElementById('section-result').classList.add('hidden');
+  document.getElementById('processingCard').classList.add('hidden');
+  document.getElementById('gpsStatus').textContent = '未取得';
+  const btn = document.getElementById('processBtn');
+  btn.disabled = true; btn.classList.add('opacity-50','cursor-not-allowed');
+  btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles mr-2"></i>OCR 解析 + AI 分析';
+  document.getElementById('saveBtn').disabled = false;
+  document.getElementById('saveBtn').innerHTML = '<i class="fa-solid fa-floppy-disk mr-2"></i>儲存至 Google Sheet';
+  document.getElementById('draftBtn').disabled = false;
+  document.getElementById('draftBtn').innerHTML = '<i class="fa-brands fa-google mr-2"></i>建立 Gmail 草稿';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ============================================================
+// 呼叫 GAS API
+// ============================================================
+async function callGAS(action, extraData = {}) {
+  if (GAS_URL === 'YOUR_GAS_WEB_APP_URL') {
+    // Demo mode — 回傳假資料
+    return demoResponse(action);
+  }
+  const payload = { action, token: SECRET_TOKEN, ...extraData };
+  const res = await fetch(GAS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload)
+  });
+  return res.json();
+}
+
+// ============================================================
+// 批次匯入
+// ============================================================
+async function startBatchImport() {
+  const folderUrl = document.getElementById('batchFolderUrl').value.trim();
+  const email     = document.getElementById('batchEmail').value.trim();
+  const note      = document.getElementById('batchNote').value.trim();
+
+  if (!folderUrl) { showToast('請填入 Google Drive 資料夾連結', 'error'); return; }
+  if (!email)     { showToast('請填入通知 Email', 'error'); return; }
+
+  const statusCard  = document.getElementById('batchStatusCard');
+  const statusIcon  = document.getElementById('batchStatusIcon');
+  const statusTitle = document.getElementById('batchStatusTitle');
+  const statusSub   = document.getElementById('batchStatusSub');
+  const submitBtn   = document.getElementById('batchSubmitBtn');
+
+  statusCard.classList.remove('hidden');
+  submitBtn.disabled = true;
+  submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+  statusIcon.textContent  = '⏳';
+  statusTitle.textContent = '驗證資料夾存取權限...';
+  statusSub.textContent   = '';
+
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        token:     SECRET_TOKEN,
+        action:    'startBatch',
+        folderUrl: folderUrl,
+        email:     email,
+        note:      note,
+        salesRep:  currentUser ? currentUser.name : '',
+      })
+    });
+    const json = await res.json();
+
+    if (!json.success) {
+      statusIcon.textContent  = '❌';
+      statusTitle.textContent = '驗證失敗';
+      statusSub.textContent   = json.error || '無法存取該資料夾，請確認共享設定。';
+      submitBtn.disabled = false;
+      submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+      return;
+    }
+
+    // Success
+    const count    = json.imageCount || 0;
+    const heicCnt  = json.heicCount  || 0;
+    statusIcon.textContent  = heicCnt > 0 ? '⚠️' : '✅';
+    statusTitle.textContent = `已送出批次任務！共 ${count} 張圖片`;
+    let subMsg = `背景處理中，完成後將發送結果至 ${email}。約需 ${Math.ceil(count * 15 / 60)} 分鐘。`;
+    if (heicCnt > 0) {
+      subMsg += `\n\n⚠️ 另有 ${heicCnt} 張 HEIC 格式圖片已略過（Claude 不支援）：\n` +
+                (json.heicFiles || []).map(f => `• ${f}`).join('\n') +
+                `\n\n解決方法：iPhone 設定 → 相機 → 格式 → 「最高相容性」`;
+      document.getElementById('batchStatusSub').style.whiteSpace = 'pre-line';
+    }
+    statusSub.textContent   = subMsg;
+    document.getElementById('batchProgressBar').classList.remove('hidden');
+    document.getElementById('batchProgressFill').style.width = '100%';
+    document.getElementById('batchProgressText').textContent = '已提交，請等待 Email 通知';
+    showToast(heicCnt > 0 ? `已啟動，${count} 張處理中，${heicCnt} 張 HEIC 略過` : `批次任務已啟動，${count} 張名片處理中`, heicCnt > 0 ? 'info' : 'success');
+
+  } catch (err) {
+    statusIcon.textContent  = '❌';
+    statusTitle.textContent = '連線失敗';
+    statusSub.textContent   = '請確認 GAS 已部署，或稍後再試。';
+    submitBtn.disabled = false;
+    submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+  }
+}
+
+function demoResponse(action) {
+  if (action === 'processCard' || action === 'analyzeManual') {
+    return { success: true, data: {
+      nameChinese: '王大明', nameEnglish: 'David Wang',
+      companyName: '台灣醫療科技股份有限公司', brandName: 'MedTech TW',
+      title: '業務總監', phone1: '+886-2-1234-5678', phone2: '',
+      email1: 'david.wang@medtech.tw', email2: '',
+      address: '台北市信義區信義路五段7號', lineId: 'davidwang_med',
+      otherMessenger: 'WeChat:davidwang', website: 'https://medtech.tw', portfolio: '',
+      gpsLocation: appState.gpsLocation || '25.033,121.565',
+      uploadTime: new Date().toISOString(), source: 'OCR',
+      imageUrl: '',
+      companyAnalysis: '台灣醫療科技為醫療設備代理商，主要代理歐美品牌超音波及影像診斷設備。具備診所及醫院通路，對PACS整合及AI輔助診斷有強烈需求。切入點：提供Edge PACS整合方案，搭配AI影像分析模組，降低其客戶的影像管理成本。',
+      emailDraft: 'Subject: Following Up - Medical Imaging Solutions for MedTech TW\n\nHi David,\n\nIt was great meeting you at the conference! I really enjoyed our conversation about medical imaging solutions.\n\nGiven MedTech TW\'s strong presence in the hospital and clinic market, I believe our Edge PACS and AI imaging solutions could complement your current product portfolio nicely — especially for clients looking to modernize their imaging workflows without major infrastructure investment.\n\nWould you be open to a quick 20-minute online demo next week? I\'d love to walk you through how other distributors in the region are leveraging our platform.\n\nLooking forward to hearing from you!\n\nBest regards,\nMarco Liu\nYour Company\npaleblue.ml@gmail.com'
+    }};
+  }
+  if (action === 'saveToSheet') return { success: true, row: 2 };
+  if (action === 'createDraft') return { success: true, message: 'Gmail 草稿已建立' };
+  return { success: false, error: 'Unknown' };
+}
+
+// ============================================================
+// Toast 通知
+// ============================================================
+let toastTimer;
+function showToast(msg, type = 'info') {
+  clearTimeout(toastTimer);
+  const icons = { success: '✅', error: '❌', loading: '⏳', info: 'ℹ️' };
+  document.getElementById('toastMsg').textContent = msg;
+  document.getElementById('toastIcon').textContent = icons[type] || '';
+  const toast = document.getElementById('toast');
+  toast.classList.remove('hidden');
+  if (type !== 'loading') {
+    toastTimer = setTimeout(() => toast.classList.add('hidden'), 3000);
+  }
+}
+</script>
+
+
+<script>
+// ============================================================
+// PWA — iOS Add to Home Screen (BCard)
+// ============================================================
+(function initPWA() {
+  function generateIcon(size) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const r = size * 0.22;
+    const grad = ctx.createLinearGradient(0, 0, size, size);
+    grad.addColorStop(0, '#1e40af'); grad.addColorStop(1, '#1d4ed8');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(r, 0); ctx.lineTo(size-r, 0);
+    ctx.quadraticCurveTo(size, 0, size, r);
+    ctx.lineTo(size, size-r);
+    ctx.quadraticCurveTo(size, size, size-r, size);
+    ctx.lineTo(r, size);
+    ctx.quadraticCurveTo(0, size, 0, size-r);
+    ctx.lineTo(0, r);
+    ctx.quadraticCurveTo(0, 0, r, 0);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'white';
+    ctx.font = `bold ${size*0.38}px -apple-system,system-ui,sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('BCard', size*0.5, size*0.5);
+    return canvas.toDataURL('image/png');
+  }
+
+  // apple-touch-icon (180x180)
+  document.getElementById('appleIcon').href = generateIcon(180);
+
+  // Web Manifest (blob URL)
+  const icon192 = generateIcon(192);
+  const icon512 = generateIcon(512);
+  const manifest = {
+    name: 'BCard 名片追蹤',
+    short_name: 'BCard',
+    description: '名片掃描 · AI 分析 · 自動開發信',
+    start_url: window.location.href,
+    display: 'standalone',
+    background_color: '#f0f4f8',
+    theme_color: '#1e40af',
+    orientation: 'portrait-primary',
+    icons: [
+      { src: icon192, sizes: '192x192', type: 'image/png' },
+      { src: icon512, sizes: '512x512', type: 'image/png' }
+    ]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+  document.getElementById('pwaManifest').href = URL.createObjectURL(blob);
+})();
+</script>
+</body>
+</html>
